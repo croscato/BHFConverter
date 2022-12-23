@@ -1,0 +1,6 @@
+# Files
+compile_commands.json
+
+# Folders
+build/
+.cache/

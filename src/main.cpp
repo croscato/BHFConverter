@@ -3,39 +3,35 @@
 
 #include <sys/stat.h>
 
-const u8 kNibbleRaw = 0x0F;
-const u8 kNibbleRep = 0x0E;
-
-enum class BHFFormat : u8 {
-      BP7 = 0x34
-    , TP6 = 0x33
-    , TP4 = 0x04 // Turbo C++ 3.0
-    , TP2 = 0x02
-};
-
-enum class BHFRecordType : u8 {
-      FileHeader
-    , Context
-    , Text
-    , Keyword
-    , Index
-    , Compression
-    , IndexTags
-};
-
-enum class BHFCompressionType : u8 {
-    Nibble = 2
-};
+constexpr u8 kNibbleRaw = 0x0F;
+constexpr u8 kNibbleRep = 0x0E;
 
 #pragma pack(push,1)
 
 struct BHFVersion {
-    BHFFormat format;
+    enum Format : u8 {
+          BP7 = 0x34
+        , TP6 = 0x33
+        , TP4 = 0x04 // Turbo C++ 3.0
+        , TP2 = 0x02
+    };
+
+    Format format;
     u8 text;
 };
 
 struct BHFHeader {
-    BHFRecordType type;
+    enum Type : u8 {
+          FileHeader
+        , Context
+        , Text
+        , Keyword
+        , Index
+        , Compression
+        , IndexTags
+    };
+
+    Type type;
     u16 length;
 };
 
@@ -49,8 +45,18 @@ struct BHFRecordFile {
 };
 
 struct BHFRecordCompression {
-    BHFCompressionType type;
+    enum Type : u8 {
+        Nibble = 2
+    };
+
+    Type type;
     u8 table[14];
+};
+
+struct BHFKeyword {
+    u16 up_context;
+    u16 down_context;
+    u16 count;
 };
 
 #pragma pack(pop)
@@ -75,7 +81,7 @@ main(void)
         exit(1);
     }
 
-    std::unique_ptr<char *> buffer = std::make_unique<char *>(reinterpret_cast<char *>(malloc(static_cast<size_t>(file_stat.st_size))));
+    std::unique_ptr<char, decltype(free)*> buffer { reinterpret_cast<char *>(malloc(static_cast<size_t>(file_stat.st_size))), free };
 
     if (!buffer) {
         fmt::print("Can't allocate {} bytes", file_stat.st_size);
@@ -89,7 +95,7 @@ main(void)
         exit(3);
     }
 
-    u64 bytes_read = fread(*buffer.get(), 1, static_cast<size_t>(file_stat.st_size), input_file);
+    u64 bytes_read = fread(buffer.get(), 1, static_cast<size_t>(file_stat.st_size), input_file);
 
     fclose(input_file);
 
@@ -99,7 +105,7 @@ main(void)
     }
 
     // -- Parsing --
-    char *cursor = *buffer.get();
+    char *cursor = buffer.get();
     char *end = cursor + bytes_read;
 
     std::string_view stamp = BHF_ReadString(&cursor);
@@ -118,11 +124,11 @@ main(void)
         fmt::print("header........: {} {}\n", static_cast<u32>(header->type), header->length);
 
         if (header->length == 0) {
-            fmt::print("cursor {:p} {:p}\n", cursor, *buffer.get() + bytes_read);
+            fmt::print("cursor {:p} {:p}\n", cursor, buffer.get() + bytes_read);
             exit(0);
         }
 
-        if (header->type == BHFRecordType::FileHeader) {
+        if (header->type == BHFHeader::FileHeader) {
             const BHFRecordFile *file = BHF_ReadPointer<BHFRecordFile>(&cursor);
 
             fmt::print("--{{ FileHeader }}--\n");
@@ -135,22 +141,24 @@ main(void)
             continue;
         }
 
-        if (header->type == BHFRecordType::Compression) {
+        if (header->type == BHFHeader::Compression) {
             compression = BHF_ReadPointer<BHFRecordCompression>(&cursor);
-
-            for (int i = 0; i < 14; ++i) {
-                fmt::print("{:02x} ", compression->table[i]);
-            }
-
 
             std::string table = BHF_StringNormalize(reinterpret_cast<const char *>(compression->table), sizeof(compression->table));
 
             fmt::print("--{{ Compression }}--\n");
             fmt::print("  type........: {}\n", static_cast<u32>(compression->type));
-            fmt::print("  table.......: |{}|\n", table);
+            fmt::print("  table.......: |{}| ", table);
+
+            for (int i = 0; i < 14; ++i) {
+                fmt::print("{:02x} ", compression->table[i]);
+            }
+
+            fmt::print("\n");
+
         }
 
-        if (header->type == BHFRecordType::Context) {
+        if (header->type == BHFHeader::Context) {
             fmt::print("--{{ Context }}--\n");
 
             u16 count = BHF_ReadValue<u16>(&cursor);
@@ -168,7 +176,7 @@ main(void)
             }
         }
 
-        if (header->type == BHFRecordType::Index) {
+        if (header->type == BHFHeader::Index) {
             fmt::print("--{{ Index }}--\n");
 
             u16 count = BHF_ReadValue<u16>(&cursor);
@@ -195,25 +203,34 @@ main(void)
             }
         }
 
-        if (header->type == BHFRecordType::Text) {
+        if (header->type == BHFHeader::Text) {
             fmt::print("--{{ Text }}--\n");
 
-            const char *cstart = cursor;
+            //const char *cstart = cursor;
             std::string text = BHF_Uncompress(&cursor, header->length, compression);
 
             fmt::print("{}\n", text);
-            fmt::print("len: {}, uncomp: {}\n", header->length, cursor - cstart);
-
-            exit(0);
         }
 
-        if (header->type == BHFRecordType::Keyword) {
+        if (header->type == BHFHeader::Keyword) {
             fmt::print("--{{ Keyword }}--\n");
 
-            cursor += header->length;
+            BHFKeyword *keyword = BHF_ReadPointer<BHFKeyword>(&cursor);
+
+            fmt::print("  up context..: {}\n", keyword->up_context);
+            fmt::print("  down context: {}\n", keyword->down_context);
+            fmt::print("  count.......: {}\n", keyword->count);
+
+#if 0
+            for (i32 count = keyword->count; count > 0; --count) {
+                fmt::print("  context.....: {}\n", BHF_ReadValue<u16>(&cursor));
+            }
+#else
+            cursor += header->length - sizeof(BHFKeyword);
+#endif
         }
 
-        if (header->type == BHFRecordType::IndexTags) {
+        if (header->type == BHFHeader::IndexTags) {
             fmt::print("--{{ IndexTags }}--\n");
 
             cursor += header->length;
@@ -507,6 +524,8 @@ BHF_Uncompress(char **buffer, size_t size, const BHFRecordCompression *compressi
             --count;
         }
     }
+
+    *buffer += size;
 
     return result;
 }

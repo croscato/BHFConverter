@@ -3,6 +3,10 @@
 
 #include <sys/stat.h>
 
+#define EXTRACT_CONTEXT 0
+#define EXTRACT_INDEX 0
+#define EXTRACT_TEXT 0
+
 constexpr u8 kNibbleRaw = 0x0F;
 constexpr u8 kNibbleRep = 0x0E;
 
@@ -68,45 +72,42 @@ const char * BHF_CP437toUTF8(u8 character);
 static std::string BHF_StringNormalize(const char *buffer, size_t size);
 static std::string BHF_Uncompress(char **buffer, size_t size, const BHFRecordCompression *compression);
 
+struct FileData {
+    i64 size;
+    std::unique_ptr<char, decltype(free)*> data;
+};
+
+FileData File_Read(std::string_view filepath);
+
 int
 main(void)
 {
-    // -- Input --
-    const char *input_path = "data/tchelp.tch";
+    // -- Database --
+    sqlite3 *db = nullptr;
 
-    struct stat file_stat;
-
-    if (stat(input_path, &file_stat) != 0) {
-        fmt::print("Can't get file information for '{}'\n", input_path);
+    if (sqlite3_open("database.db", &db) != SQLITE_OK) {
+        fmt::print("SQlite3: {}\n", sqlite3_errmsg(db));
         exit(1);
     }
 
-    std::unique_ptr<char, decltype(free)*> buffer { reinterpret_cast<char *>(malloc(static_cast<size_t>(file_stat.st_size))), free };
+    {
+        FileData sql_file = File_Read("database.sql");
 
-    if (!buffer) {
-        fmt::print("Can't allocate {} bytes", file_stat.st_size);
-        exit(2);
+        char *error_message;
+
+        if (sqlite3_exec(db, sql_file.data.get(), nullptr, nullptr, &error_message) != SQLITE_OK) {
+            fmt::print("SQlite3: {}\n", error_message);
+            sqlite3_free(error_message);
+            exit(1);
+        }
     }
 
-    FILE *input_file = fopen(input_path, "rb");
-
-    if (!input_file) {
-        fmt::print("Can't open input file '{}'\n", input_path);
-        exit(3);
-    }
-
-    u64 bytes_read = fread(buffer.get(), 1, static_cast<size_t>(file_stat.st_size), input_file);
-
-    fclose(input_file);
-
-    if (bytes_read != static_cast<u64>(file_stat.st_size)) {
-        fmt::print("Trying to read {} bytes from input but got {} bytes", file_stat.st_size, bytes_read);
-        exit(4);
-    }
+    // -- Input --
+    FileData help_file = File_Read("data/tchelp.tch");
 
     // -- Parsing --
-    char *cursor = buffer.get();
-    char *end = cursor + bytes_read;
+    char *cursor = help_file.data.get();
+    char *end = cursor + help_file.size;
 
     std::string_view stamp = BHF_ReadString(&cursor);
     fmt::print("stamp.........: {}\n", stamp);
@@ -119,12 +120,15 @@ main(void)
 
     const BHFRecordCompression *compression = nullptr;
 
+    i64 context_id = 0;
+
     while (cursor < end) {
+        i64 offset = cursor - help_file.data.get();
+
         const BHFHeader *header = BHF_ReadPointer<BHFHeader>(&cursor);
-        fmt::print("header........: {} {}\n", static_cast<u32>(header->type), header->length);
 
         if (header->length == 0) {
-            fmt::print("cursor {:p} {:p}\n", cursor, buffer.get() + bytes_read);
+            fmt::print("cursor {:p} {:p}\n", cursor, help_file.data.get() + help_file.size);
             exit(0);
         }
 
@@ -156,31 +160,56 @@ main(void)
 
             fmt::print("\n");
 
+            continue;
         }
 
         if (header->type == BHFHeader::Context) {
+#if EXTRACT_CONTEXT 
             fmt::print("--{{ Context }}--\n");
-
             u16 count = BHF_ReadValue<u16>(&cursor);
 
             fmt::print("  count.......: {}\n", count);
+
+            sqlite3_stmt *stmt = nullptr;
+
+            sqlite3_exec(db, "BEGIN_TRANSACTION", nullptr, nullptr, nullptr);
+            sqlite3_prepare(db, "INSERT INTO tbl_context (context_offset) VALUES (?)", -1, &stmt, nullptr);
 
             for (u16 i = 0; i < count; ++i) {
                 u32 index = static_cast<u8>(*cursor++);
                 index |= static_cast<u32>(static_cast<u8>((*cursor++)) << 8u);
                 index |= static_cast<u32>(static_cast<u8>(*cursor++) << 16u);
 
-                if (i < 2 || i > count - 2) {
-                    fmt::print("  index.......: {}\n", index);
+                sqlite3_reset(stmt);
+                sqlite3_clear_bindings(stmt);
+                sqlite3_bind_int64(stmt, 1, index);
+
+                if (sqlite3_step(stmt) == SQLITE_ERROR) {
+                    fmt::print("Context insert error: {}\n", sqlite3_errmsg(db));
+                    fmt::print("Current context: {} {}\n", i, index);
                 }
             }
+
+            sqlite3_finalize(stmt);
+            sqlite3_exec(db, "END_TRANSACTION", nullptr, nullptr, nullptr);
+#else
+            cursor += header->length;
+#endif
+            continue;
         }
 
         if (header->type == BHFHeader::Index) {
+#if EXTRACT_INDEX 
             fmt::print("--{{ Index }}--\n");
-
             u16 count = BHF_ReadValue<u16>(&cursor);
             fmt::print("  count.......: {}\n", count);
+
+            sqlite3_stmt *stmt = nullptr;
+
+            sqlite3_exec(db, "BEGIN_TRANSACTION", nullptr, nullptr, nullptr);
+            sqlite3_prepare(db, "INSERT INTO tbl_index (context_id, index_value) VALUES (?, ?)", -1, &stmt, nullptr);
+
+            std::string previous_index;
 
             for (u16 i = 0; i < count; ++i) {
                 u8 length = BHF_ReadValue<u8>(&cursor)  ;
@@ -188,54 +217,140 @@ main(void)
 
                 length &= 0x1f;
 
-                std::string chars = BHF_StringNormalize(cursor, length);
+                std::string chars;
+
+                if (carry) {
+                    chars = previous_index.substr(0, carry);
+                }
+
+                chars += BHF_StringNormalize(cursor, length);
 
                 cursor += length;
 
                 u16 context = BHF_ReadValue<u16>(&cursor);
 
-                if (i < 2 || i > count - 2) {
-                    fmt::print("  carry.......: {}\n", carry);
-                    fmt::print("  length......: {}\n", length);
-                    fmt::print("  chars.......: {}\n", chars);
-                    fmt::print("  context.....: {}\n", context);
+                sqlite3_reset(stmt);
+                sqlite3_clear_bindings(stmt);
+                sqlite3_bind_int64(stmt, 1, context);
+                sqlite3_bind_text(stmt, 2, chars.c_str(), static_cast<int>(chars.size()), nullptr);
+                
+                if (sqlite3_step(stmt) == SQLITE_ERROR) {
+                    fmt::print("Index insert error: {}\n", sqlite3_errmsg(db));
+                    fmt::print("Current index: {} {}\n", i, chars);
                 }
+
+                previous_index = chars;
             }
+
+            sqlite3_finalize(stmt);
+            sqlite3_exec(db, "END_TRANSACTION", nullptr, nullptr, nullptr);
+#else
+            cursor += header->length;
+#endif
+            continue;
         }
 
         if (header->type == BHFHeader::Text) {
+#if EXTRACT_TEXT
             fmt::print("--{{ Text }}--\n");
+            sqlite3_stmt *stmt = nullptr;
 
-            //const char *cstart = cursor;
+            sqlite3_prepare(db, "SELECT context_id FROM tbl_context WHERE context_offset = ?", -1, &stmt, nullptr);
+            sqlite3_bind_int64(stmt, 1, offset);
+            sqlite3_step(stmt);
+
+            context_id = sqlite3_column_int64(stmt, 0);
+
+            sqlite3_finalize(stmt);
+
+            sqlite3_exec(db, "BEGIN_TRANSACTION", nullptr, nullptr, nullptr);
+            sqlite3_prepare(db, "INSERT INTO tbl_text (context_id, text_value) VALUES (?, ?)", -1, &stmt, nullptr);
+
             std::string text = BHF_Uncompress(&cursor, header->length, compression);
 
-            fmt::print("{}\n", text);
+            sqlite3_bind_int64(stmt, 1, context_id);
+            sqlite3_bind_blob(stmt, 2, text.c_str(), static_cast<int>(text.size()), nullptr);
+
+            if (sqlite3_step(stmt) == SQLITE_ERROR) {
+                fmt::print("Text insert error: {}\n", sqlite3_errmsg(db));
+                fmt::print("Current context: {}\n", context_id);
+            }
+
+            sqlite3_finalize(stmt);
+
+            sqlite3_exec(db, "END_TRANSACTION", nullptr, nullptr, nullptr);
+#else
+            cursor += header->length;
+#endif
+            continue;
         }
 
         if (header->type == BHFHeader::Keyword) {
+#if EXTRACT_TEXT
             fmt::print("--{{ Keyword }}--\n");
-
             BHFKeyword *keyword = BHF_ReadPointer<BHFKeyword>(&cursor);
-
-            fmt::print("  up context..: {}\n", keyword->up_context);
-            fmt::print("  down context: {}\n", keyword->down_context);
             fmt::print("  count.......: {}\n", keyword->count);
 
-#if 0
-            for (i32 count = keyword->count; count > 0; --count) {
-                fmt::print("  context.....: {}\n", BHF_ReadValue<u16>(&cursor));
+            sqlite3_stmt *stmt = nullptr;
+
+            sqlite3_exec(db, "BEGIN_TRANSACTION", nullptr, nullptr, nullptr);
+            sqlite3_prepare(db, "INSERT INTO tbl_keyword (context_id, keyword_up_context, keyword_down_context) VALUES (?, ?, ?)", -1, &stmt, nullptr);
+
+            sqlite3_bind_int64(stmt, 1, context_id);
+
+            if (keyword->up_context > 0) {
+                sqlite3_bind_int64(stmt, 2, keyword->up_context);
             }
+
+            if (keyword->down_context > 0) {
+                sqlite3_bind_int64(stmt, 3, keyword->down_context);
+            }
+
+            if (sqlite3_step(stmt) == SQLITE_ERROR) {
+                fmt::print("Keyword insert error: {}\n", sqlite3_errmsg(db));
+            }
+            sqlite3_finalize(stmt);
+            sqlite3_exec(db, "END_TRANSACTION", nullptr, nullptr, nullptr);
+
+            sqlite3_exec(db, "BEGIN_TRANSACTION", nullptr, nullptr, nullptr);
+            if (sqlite3_prepare(db, "INSERT INTO tbl_keyword_list (context_id, keyword_index, keyword_context) VALUES (?, ?, ?)", -1, &stmt, nullptr) == SQLITE_ERROR) {
+                fmt::print("PREPARE ERROR: {}\n", sqlite3_errmsg(db));
+                exit(0);
+            }
+
+            for (i32 index = 0; index < keyword->count; ++index) {
+                sqlite3_reset(stmt);
+                sqlite3_clear_bindings(stmt);
+                sqlite3_bind_int64(stmt, 1, context_id);
+                sqlite3_bind_int64(stmt, 2, index);
+                sqlite3_bind_int64(stmt, 3, BHF_ReadValue<u16>(&cursor));
+                    
+                if (sqlite3_step(stmt) == SQLITE_ERROR) {
+                    fmt::print("Keyword index insert error: {}\n", sqlite3_errmsg(db));
+                }
+            }
+
+            sqlite3_finalize(stmt);
+            sqlite3_exec(db, "END_TRANSACTION", nullptr, nullptr, nullptr);
 #else
-            cursor += header->length - sizeof(BHFKeyword);
+            cursor += header->length;
 #endif
+            continue;
         }
 
         if (header->type == BHFHeader::IndexTags) {
             fmt::print("--{{ IndexTags }}--\n");
 
             cursor += header->length;
+
+            continue;
         }
+
+        // ERROR: should not be reachable
+        fmt::print("header........: {} {}\n", static_cast<u32>(header->type), header->length);
     }
+
+    sqlite3_close(db);
 
     return 0;
 }
@@ -526,6 +641,47 @@ BHF_Uncompress(char **buffer, size_t size, const BHFRecordCompression *compressi
     }
 
     *buffer += size;
+
+    return result;
+}
+
+FileData
+File_Read(std::string_view filepath)
+{
+    FileData result {0, {nullptr, free}};
+
+    struct stat file_stat;
+
+    if (stat(filepath.data(), &file_stat) != 0) {
+        fmt::print("Can't get file information for '{}'\n", filepath);
+        exit(1);
+    }
+
+    result.size = file_stat.st_size;
+    result.data.reset(reinterpret_cast<char *>(malloc(static_cast<size_t>(file_stat.st_size + 1))));
+
+    if (!result.data) {
+        fmt::print("Can't allocate {} bytes", file_stat.st_size);
+        exit(2);
+    }
+
+    FILE *input_file = fopen(filepath.data(), "rb");
+
+    if (!input_file) {
+        fmt::print("Can't open input file '{}'\n", filepath);
+        exit(3);
+    }
+
+    u64 bytes_read = fread(result.data.get(), 1, static_cast<size_t>(file_stat.st_size), input_file);
+
+    fclose(input_file);
+
+    if (bytes_read != static_cast<u64>(file_stat.st_size)) {
+        fmt::print("Trying to read {} bytes from input but got {} bytes", file_stat.st_size, bytes_read);
+        exit(4);
+    }
+
+    result.data.get()[result.size] = '\0';
 
     return result;
 }

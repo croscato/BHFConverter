@@ -54,5 +54,7 @@ if(USE_SQLITE3)
     endif()
 
     add_subdirectory(${sqlite3_SOURCE_DIR} ${sqlite3_BINARY_DIR})
+
+    add_compile_definitions(USING_SQLITE3)
 endif()
 

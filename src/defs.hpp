@@ -19,7 +19,7 @@
 #   include <fmt/format.h>
 #endif
 
-#if defined(USE_SQLITE3)
+#if defined(USING_SQLITE3)
 #   include <sqlite3.h>
 #endif
 

@@ -1,5 +1,6 @@
 # Files
 compile_commands.json
+*.user
 
 # Folders
 build/

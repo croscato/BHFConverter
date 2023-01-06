@@ -9,7 +9,11 @@
 #include <cstdlib>
 #include <cstdio>
 
+#include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
+#include <array>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpadded"

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2022 Gustavo Ribeiro Croscato
 
+#if 0
 #include <sys/stat.h>
 
 #define EXTRACT_CONTEXT 0
@@ -85,7 +86,7 @@ main(void)
     // -- Database --
     sqlite3 *db = nullptr;
 
-    if (sqlite3_open("database.db", &db) != SQLITE_OK) {
+    if (sqlite3_open("bcpp_31.db", &db) != SQLITE_OK) {
         fmt::print("SQlite3: {}\n", sqlite3_errmsg(db));
         exit(1);
     }
@@ -280,7 +281,13 @@ main(void)
 
             sqlite3_exec(db, "END_TRANSACTION", nullptr, nullptr, nullptr);
 #else
-            cursor += header->length;
+            if (offset == 1510071) {
+                std::string text = BHF_Uncompress(&cursor, header->length, compression);
+
+                fmt::print("TEXT: {}", text);
+            } else {
+                cursor += header->length;
+            }
 #endif
             continue;
         }
@@ -685,4 +692,18 @@ File_Read(std::string_view filepath)
 
     return result;
 }
+#else
+#include "bhf/file.hpp"
 
+int
+main()
+{
+    BHF::File help("data/tchelp.tch");
+
+    std::string text = help.text(1510071);
+
+    fmt::print("{}", text);
+
+    return 0;
+}
+#endif

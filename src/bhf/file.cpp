@@ -5,8 +5,26 @@
 
 namespace BHF {
 
-constexpr u8 kNibbleRaw = 0x0F;
-constexpr u8 kNibbleRep = 0x0E;
+struct ControlCode {
+    enum : u8 {
+        NewLine = 0x00,
+        DocumentEnd = 0x01,
+        KeywordMark = 0x02,
+        SourceCode = 0x05,
+        CharRaw = 0x0f,
+        CharCount = 0x0e,
+    };
+
+    static bool isValid(u8 code)
+    {
+        return code == NewLine
+            || code == DocumentEnd
+            || code == KeywordMark
+            || code == SourceCode
+            || code == CharRaw
+            || code == CharCount;
+    }
+};
 
 struct FileData {
     FILE *file = nullptr;
@@ -22,7 +40,11 @@ struct FileData {
     std::string last_error;
 };
 
-static const char * BHF_CP437toUTF8(u8 character);
+static std::string kHtmlSpace = "&nbsp;";
+
+static std::string BHF_CP437toUTF8(u8 character);
+static std::string BHF_HTMLEncoding(u8 character);
+static void BHF_InsertHtmlKeyword(std::string &text, std::string::size_type position, File::ContextType context);
 
 File::File() noexcept
     : d{std::make_unique<FileData>()}
@@ -100,10 +122,10 @@ File::index() const noexcept
 }
 
 std::string
-File::text(ContextType context) noexcept
+File::text(ContextType offset, TextFormat format) noexcept
 {
     // TODO: error handling
-    fseek(d->file, context, SEEK_SET);
+    fseek(d->file, offset, SEEK_SET);
 
     RecordHeader record = readType<RecordHeader>();
 
@@ -113,7 +135,7 @@ File::text(ContextType context) noexcept
     }
 
     // TODO: Keyword record
-    return uncompress(record);
+    return uncompress(record, format);
 }
 
 const std::string &
@@ -152,8 +174,32 @@ struct NibbleStream {
     int index = 0;
 };
 
+void
+BHF_InsertHtmlKeyword(std::string &text, std::string::size_type position, File::ContextType context)
+{
+    auto size = kHtmlSpace.size();
+
+    if (text.size() > size) {
+        while (text.compare(position, size, kHtmlSpace) == 0) {
+            position += size;
+        }
+    }
+
+    text.insert(position, fmt::format("<a href=\"{}\">", context));
+
+    position = text.size();
+
+    if (position > size) {
+        while (text.compare(position - size, size, kHtmlSpace) == 0) {
+            position -= size;
+        }
+    }
+
+    text.insert(position, "</a>");
+}
+
 std::string
-File::uncompress(const RecordHeader &record)
+File::uncompress(const RecordHeader &record, TextFormat format)
 {
     std::string result;
 
@@ -163,17 +209,38 @@ File::uncompress(const RecordHeader &record)
 
     i32 count = 0;
 
+    bool in_keyword = false;
+    bool in_code = false;
+
+    KeywordData keywords;
+
+    ContextContainer::size_type keyword = 0;
+    std::string::size_type keyword_position = 0;
+
+    if (format != PlainText) {
+        // TODO: error handling
+        i64 position = ftell(d->file);
+
+        // TODO: error handling
+        fseek(d->file, record.length, SEEK_CUR);
+
+        keywords = readKeywords();
+
+        // TODO: error handling
+        fseek(d->file, position, SEEK_SET);
+    }
+
     while (!stream.isEmpty()) {
         u8 nibble = stream.next();
         u8 value = 0;
 
-        if (nibble == kNibbleRaw) {
+        if (nibble == ControlCode::CharRaw) {
             u8 n1 = stream.next();
             u8 n2 = stream.next();
 
             value = static_cast<u8>((n2 << 4) | n1);
             count += 1;
-        } else if (nibble == kNibbleRep) {
+        } else if (nibble == ControlCode::CharCount) {
             count = stream.next() + 1;
 
             continue;
@@ -182,16 +249,46 @@ File::uncompress(const RecordHeader &record)
             count += 1;
         }
 
-        if (value == 0x01 || value == 0x02) {
+        if (ControlCode::isValid(value) && value != ControlCode::NewLine) {
+            if (value == ControlCode::KeywordMark) {
+                in_keyword = !in_keyword;
+
+                if (in_keyword) {
+                    keyword_position = result.size();
+                } else {
+                    if (format == HTML) {
+                        BHF_InsertHtmlKeyword(result, keyword_position, keywords.contexts.at(keyword++));
+                    }
+                }
+            } else if (value == ControlCode::SourceCode) {
+                in_code = !in_code;
+
+                if (in_code) {
+                    if (format == HTML) {
+                        result += "<pre>";
+                    }
+                } else {
+                    if (format == HTML) {
+                        result += "</pre>";
+                    }
+                }
+            }
+
             count = 0;
 
             continue;
         }
 
-        const char *out = BHF_CP437toUTF8(value);
+        std::string converted;
+
+        if (format == PlainText) {
+            converted = BHF_CP437toUTF8(value);
+        } else if (format == HTML) {
+            converted = BHF_HTMLEncoding(value);
+        }
 
         while (count > 0) {
-            result += out;
+            result += converted;
 
             --count;
         }
@@ -216,7 +313,7 @@ File::readString(std::string &str) noexcept
 
     size_t string_size = static_cast<size_t>(string_end - string_start);
 
-    str.resize(string_size);
+    str.resize(string_size - 1);
 
     size_t bytes_read = fread(str.data(), 1, string_size, d->file);
 
@@ -224,6 +321,30 @@ File::readString(std::string &str) noexcept
         // TODO: better error handling (erro code?)
         d->last_error = fmt::format("Short read, trying to read {} bytes got {} bytes.", string_size, bytes_read);
     }
+}
+
+File::KeywordData
+File::readKeywords() noexcept
+{
+    RecordHeader record = readType<RecordHeader>();
+
+    if (record.type != RecordHeader::Keyword) {
+        // TODO: error handling
+        fmt::print("NO KEYWORD HEADER");
+    }
+
+    KeywordData result;
+
+    BHF::Keyword keyword = readType<BHF::Keyword>();
+
+    result.up = keyword.up_context;
+    result.down = keyword.down_context;
+
+    for (int i = 0; i < keyword.count; ++i) {
+        result.contexts.push_back(readType<u16>());
+    }
+
+    return result;
 }
 
 template<typename T>
@@ -246,6 +367,15 @@ File::parse() noexcept
 {
     // [Stamp]
     readString(d->stamp);
+
+    u8 end_of_stamp;
+
+    fread(&end_of_stamp, 1, sizeof(end_of_stamp), d->file);
+
+    if (end_of_stamp != 0x1a) {
+        // TODO: error handling
+        fmt::print("EOS ERROR\n");
+    }
 
     // [Signature]
     readString(d->signature);
@@ -339,12 +469,12 @@ File::parse() noexcept
     // TODO: Indextags Record {introduced in BP7}
 }
 
-const char *
+std::string
 BHF_CP437toUTF8(u8 character)
 {
-    static char default_char[2] = {0, 0};
-
     switch (character) {
+        case ControlCode::NewLine: return "\n";
+
         case 0x01: return "\u263a";
         case 0x02: return "\u263b";
         case 0x03: return "\u2665";
@@ -515,19 +645,32 @@ BHF_CP437toUTF8(u8 character)
         case 0xfd: return "\u00b2";
         case 0xfe: return "\u25a0";
         case 0xff: return "\u00a0";
-
-        default: {
-            if (character == 0x00) {
-                default_char[0] = '\n';
-            } else if (character < 0x20 || character > 0x7e) {
-                // TODO: error handling
-            } else {
-                default_char[0] = static_cast<char>(character);
-            }
-
-            return default_char;
-        }
     }
+
+    if (character < 0x20 || character > 0x7e) {
+        // TODO: error handling
+        return fmt::format("[{}]", static_cast<i32>(character));
+    }
+
+    return std::string(1, static_cast<char>(character));
+}
+
+std::string
+BHF_HTMLEncoding(u8 character)
+{
+    switch (character) {
+        case ControlCode::NewLine: return "<br>";
+
+        case 0x20: return kHtmlSpace;
+        case 0x22: return "&quot;";
+        case 0x26: return "&amp;";
+        case 0x27: return "&#39;";
+        case 0x2f: return "&#47;";
+        case 0x3c: return "&lt;";
+        case 0x3e: return "&gt;";
+    }
+
+    return BHF_CP437toUTF8(character);
 }
 
 } // namespace BHF

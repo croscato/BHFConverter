@@ -13,6 +13,11 @@ struct FileData;
 class File
 {
 public:
+    enum TextFormat {
+          PlainText
+        , HTML
+    };
+
     using ContextType = int;
     using ContextContainer = std::vector<ContextType>;
 
@@ -32,13 +37,20 @@ public:
     const Compression &compression() const noexcept;
     const ContextContainer &context() const noexcept;
     const IndexContainer &index() const noexcept;
-    std::string text(ContextType context) noexcept;
+    std::string text(ContextType offset, TextFormat format = PlainText) noexcept;
 
     const std::string &lastError() const noexcept;
 
 private:
-    std::string uncompress(const RecordHeader &record);
+    struct KeywordData {
+        ContextType up;
+        ContextType down;
+        ContextContainer contexts;
+    };
+
+    std::string uncompress(const RecordHeader &record, TextFormat format);
     void readString(std::string &str) noexcept;
+    KeywordData readKeywords() noexcept;
 
     template<typename T>
     T readType() noexcept;

@@ -120,10 +120,7 @@ MainWindow::refreshBHFInformation() noexcept
 {
     d->stamp->setText(tr("<b>Stamp</b>: %1").arg(d->help_file.stamp().c_str()));
 
-    QByteArray signature = QByteArray::fromStdString(d->help_file.signature());
-    signature.chop(1);
-
-    d->signature->setText(tr("<b>Signature</b>: %1").arg(signature.toHex(':')));
+    d->signature->setText(tr("<b>Signature</b>: %1").arg(QString::fromStdString(d->help_file.signature())));
 
     auto version = d->help_file.version();
 
@@ -161,9 +158,9 @@ MainWindow::refreshBHFInformation() noexcept
 void
 MainWindow::openContext(int context) noexcept
 {
-    std::string text = d->help_file.text(context);
+    std::string text = d->help_file.text(context, BHF::File::HTML);
 
-    d->text->setText(QString::fromUtf8(text.data(), static_cast<qsizetype>(text.size())));
+    d->text->setHtml(QString::fromStdString(text));
 }
 
 void
@@ -300,7 +297,20 @@ MainWindow::setupUI() noexcept
 
     d->text = new QTextBrowser;
     d->text->setFont(font_fixed);
+    d->text->setOpenLinks(false);
     d->text->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
+
+    auto link_context = [this](const QUrl &url)->void {
+        BHF::File::ContextType context = url.path().toInt();
+
+        QModelIndex context_index = d->model_context->index(context, 1);
+
+        BHF::File::ContextType offset = d->model_context->data(context_index, Qt::DisplayRole).toInt();
+
+        openContext(offset);
+    };
+
+    connect(d->text, &QTextBrowser::anchorClicked, link_context);
 
     main_layout->addWidget(d->tab);
     main_layout->addWidget(d->text);

@@ -41,10 +41,13 @@ struct FileData {
 };
 
 static std::string kHtmlSpace = "&nbsp;";
+static constexpr int kAsciiSpace = 0x20;
 
 static std::string BHF_CP437toUTF8(u8 character);
 static std::string BHF_HTMLEncoding(u8 character);
 static void BHF_InsertHtmlKeyword(std::string &text, std::string::size_type position, File::ContextType context);
+static std::string BHF_FormatAsText(const std::string &text);
+static std::string BHF_FormatAsHTML(const std::string &text);
 
 File::File() noexcept
     : d{std::make_unique<FileData>()}
@@ -122,6 +125,52 @@ File::index() const noexcept
 }
 
 std::string
+BHF_FormatAsText(const std::string &text)
+{
+    std::string result;
+    result.reserve(text.size());
+
+    for (std::string::size_type i = 0; i < text.size(); ++i) {
+        u8 value = static_cast<u8>(text[i]);
+
+        if (ControlCode::isValid(value)) {
+            if (value == ControlCode::NewLine) {
+                result += "\n";
+            } else if (value == ControlCode::DocumentEnd) {
+                break;
+            }
+        } else {
+            result += BHF_CP437toUTF8(value);
+        }
+    }
+
+    return result;
+}
+
+std::string
+BHF_FormatAsHTML(const std::string &text)
+{
+    std::string result;
+    result.reserve(text.size());
+
+    for (std::string::size_type i = 0; i < text.size(); ++i) {
+        u8 value = static_cast<u8>(text[i]);
+
+        if (ControlCode::isValid(value)) {
+            if (value == ControlCode::NewLine) {
+                result += "<br>";
+            } else if (value == ControlCode::DocumentEnd) {
+                break;
+            }
+        } else {
+            result += BHF_HTMLEncoding(value);
+        }
+    }
+
+    return result;
+}
+
+std::string
 File::text(ContextType offset, TextFormat format) noexcept
 {
     // TODO: error handling
@@ -135,7 +184,15 @@ File::text(ContextType offset, TextFormat format) noexcept
     }
 
     // TODO: Keyword record
-    return uncompress(record, format);
+    std::string uncompressed_text = uncompress(record);
+
+    if (format == PlainText) {
+        return BHF_FormatAsText(uncompressed_text);
+    } else if (format == HTML) {
+        return BHF_FormatAsHTML(uncompressed_text);
+    }
+
+    return uncompressed_text;
 }
 
 const std::string &
@@ -162,6 +219,7 @@ struct NibbleStream {
 
         return (nibble >> 4u) & 0x0f;
     }
+
 
     bool isEmpty() const
     {
@@ -199,7 +257,7 @@ BHF_InsertHtmlKeyword(std::string &text, std::string::size_type position, File::
 }
 
 std::string
-File::uncompress(const RecordHeader &record, TextFormat format)
+File::uncompress(const RecordHeader &record)
 {
     std::string result;
 
@@ -207,28 +265,16 @@ File::uncompress(const RecordHeader &record, TextFormat format)
 
     NibbleStream stream(d->file, record.length * 2);
 
-    i32 count = 0;
-
+    bool break_on_width = false;
     bool in_keyword = false;
-    bool in_code = false;
 
-    KeywordData keywords;
+    const std::string::size_type margin_width = static_cast<std::string::size_type>(d->file_header.left_margin);
+    const std::string::size_type maximum_width = d->file_header.width - margin_width;
+    std::string::size_type width = margin_width;
+    std::string::size_type count = 0;
+    std::string::size_type last_space = 0;
 
-    ContextContainer::size_type keyword = 0;
-    std::string::size_type keyword_position = 0;
-
-    if (format != PlainText) {
-        // TODO: error handling
-        i64 position = ftell(d->file);
-
-        // TODO: error handling
-        fseek(d->file, record.length, SEEK_CUR);
-
-        keywords = readKeywords();
-
-        // TODO: error handling
-        fseek(d->file, position, SEEK_SET);
-    }
+    u8 last_value;
 
     while (!stream.isEmpty()) {
         u8 nibble = stream.next();
@@ -241,7 +287,7 @@ File::uncompress(const RecordHeader &record, TextFormat format)
             value = static_cast<u8>((n2 << 4) | n1);
             count += 1;
         } else if (nibble == ControlCode::CharCount) {
-            count = stream.next() + 1;
+            count = static_cast<std::string::size_type>(stream.next() + 1);
 
             continue;
         } else {
@@ -249,48 +295,51 @@ File::uncompress(const RecordHeader &record, TextFormat format)
             count += 1;
         }
 
-        if (ControlCode::isValid(value) && value != ControlCode::NewLine) {
-            if (value == ControlCode::KeywordMark) {
-                in_keyword = !in_keyword;
-
-                if (in_keyword) {
-                    keyword_position = result.size();
-                } else {
-                    if (format == HTML) {
-                        BHF_InsertHtmlKeyword(result, keyword_position, keywords.contexts.at(keyword++));
-                    }
-                }
-            } else if (value == ControlCode::SourceCode) {
-                in_code = !in_code;
-
-                if (in_code) {
-                    if (format == HTML) {
-                        result += "<pre>";
-                    }
-                } else {
-                    if (format == HTML) {
-                        result += "</pre>";
-                    }
-                }
-            }
-
-            count = 0;
-
-            continue;
+        if (value == ControlCode::KeywordMark) {
+            in_keyword = !in_keyword;
         }
 
-        std::string converted;
+        if (width == margin_width && value != kAsciiSpace && value != ControlCode::NewLine) {
+            break_on_width = true;
+        }
 
-        if (format == PlainText) {
-            converted = BHF_CP437toUTF8(value);
-        } else if (format == HTML) {
-            converted = BHF_HTMLEncoding(value);
+        if (break_on_width && last_value == ControlCode::NewLine && (value == ControlCode::NewLine || value == kAsciiSpace)) {
+            break_on_width = false;
+
+            result += static_cast<char>(ControlCode::NewLine);
+        }
+
+        if (break_on_width && value == ControlCode::NewLine) {
+            if (width > maximum_width) {
+                result.replace(last_space - 1, 1, std::string(1, static_cast<char>(ControlCode::NewLine)));
+                width = result.size() - last_space;
+            }
+
+            last_value = value;
+
+            value = kAsciiSpace;
+        } else {
+            last_value = value;
+        }
+
+        std::string converted = std::string(1, static_cast<char>(value));
+
+        if (!ControlCode::isValid(value)) {
+            width += count;
         }
 
         while (count > 0) {
             result += converted;
 
             --count;
+        }
+
+        if (value == ControlCode::NewLine) {
+            width = margin_width;
+            last_space = 0;
+            break_on_width = false;
+        } else if (value == kAsciiSpace && width < maximum_width && !in_keyword) {
+            last_space = result.size();
         }
     }
 
@@ -473,8 +522,6 @@ std::string
 BHF_CP437toUTF8(u8 character)
 {
     switch (character) {
-        case ControlCode::NewLine: return "\n";
-
         case 0x01: return "\u263a";
         case 0x02: return "\u263b";
         case 0x03: return "\u2665";
@@ -659,8 +706,6 @@ std::string
 BHF_HTMLEncoding(u8 character)
 {
     switch (character) {
-        case ControlCode::NewLine: return "<br>";
-
         case 0x20: return kHtmlSpace;
         case 0x22: return "&quot;";
         case 0x26: return "&amp;";

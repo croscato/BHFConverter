@@ -48,7 +48,7 @@ private:
         ContextContainer contexts;
     };
 
-    std::string uncompress(const RecordHeader &record, TextFormat format);
+    std::string uncompress(const RecordHeader &record);
     void readString(std::string &str) noexcept;
     KeywordData readKeywords() noexcept;
 

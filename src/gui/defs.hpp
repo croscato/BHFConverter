@@ -12,6 +12,7 @@
 #include <QtGui/QFontDatabase>
 #include <QtGui/QKeySequence>
 #include <QtWidgets/QApplication>
+#include <QtWidgets/QFileDialog>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QHeaderView>
 #include <QtWidgets/QLabel>

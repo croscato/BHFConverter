@@ -71,17 +71,36 @@ MainWindow::MainWindow(QWidget *parent) noexcept
 
     setupMenus();
     setupUI();
-
-    d->help_file.open("data/tchelp.tch");
-
-    refreshBHFInformation();
 }
 
 MainWindow::~MainWindow() noexcept = default;
 
 void
 MainWindow::fileOpen() noexcept
-{}
+{
+    QString filter {
+        "All help files (*.tch *.tph *.tah);;"
+        "Turbo C++ help files (*tch);;"
+        "Turbo Pascal help file (*.tph);;"
+        "Turbo Assembler help file (*.tah);;"
+        "All files (*.*)"
+    };
+
+    QFileDialog dialog(this);
+
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    dialog.setAcceptMode(QFileDialog::AcceptOpen);
+    dialog.setNameFilter(filter);
+    dialog.exec();
+
+    if (dialog.selectedFiles().size() > 0) {
+        QString filename = dialog.selectedFiles().at(0);
+
+        d->help_file.open(filename.toStdString());
+
+        refreshBHFInformation();
+    }
+}
 
 void
 MainWindow::fileQuit() noexcept

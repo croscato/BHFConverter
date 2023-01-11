@@ -46,8 +46,6 @@ static constexpr int kAsciiSpace = 0x20;
 static std::string BHF_CP437toUTF8(u8 character);
 static std::string BHF_HTMLEncoding(u8 character);
 static void BHF_InsertHtmlKeyword(std::string &text, std::string::size_type position, File::ContextType context);
-static std::string BHF_FormatAsText(const std::string &text);
-static std::string BHF_FormatAsHTML(const std::string &text);
 
 File::File() noexcept
     : d{std::make_unique<FileData>()}
@@ -125,7 +123,7 @@ File::index() const noexcept
 }
 
 std::string
-BHF_FormatAsText(const std::string &text)
+File::BHF_FormatAsText(const std::string &text) const
 {
     std::string result;
     result.reserve(text.size());
@@ -148,10 +146,21 @@ BHF_FormatAsText(const std::string &text)
 }
 
 std::string
-BHF_FormatAsHTML(const std::string &text)
+File::BHF_FormatAsHTML(const std::string &text)
 {
     std::string result;
     result.reserve(text.size());
+
+    BHF::File::ContextContainer::size_type keyword = 0;
+    std::string::size_type keyword_start = 0;
+    std::string::size_type keyword_end = 0;
+
+    const KeywordData keywords = readKeywords();
+
+    bool in_keyword = false;
+    bool in_code = false;
+
+    result += "<pre>";
 
     for (std::string::size_type i = 0; i < text.size(); ++i) {
         u8 value = static_cast<u8>(text[i]);
@@ -159,13 +168,41 @@ BHF_FormatAsHTML(const std::string &text)
         if (ControlCode::isValid(value)) {
             if (value == ControlCode::NewLine) {
                 result += "<br>";
+            } else if (value == ControlCode::KeywordMark) {
+                in_keyword = !in_keyword;
+
+                if (in_keyword) {
+                    keyword_start = 0;
+                    keyword_end = 0;
+                } else {
+                    result.insert(keyword_end, "</a>");
+                    result.insert(keyword_start, fmt::format("<a href=\"{}\">", keywords.contexts.at(keyword++)));
+                }
+            } else if (value == ControlCode::SourceCode) {
+                in_code = !in_code;
+
+                if (in_code) {
+                    result += "<code>";
+                } else {
+                    result += "</code>";
+                }
             } else if (value == ControlCode::DocumentEnd) {
                 break;
             }
         } else {
+            if (in_keyword && value != kAsciiSpace && keyword_start == 0) {
+                keyword_start = result.size();
+            }
+
             result += BHF_HTMLEncoding(value);
+
+            if (in_keyword && value != kAsciiSpace) {
+                keyword_end = result.size();
+            }
         }
     }
+
+    result += "</pre>";
 
     return result;
 }
@@ -183,7 +220,6 @@ File::text(ContextType offset, TextFormat format) noexcept
         return "";
     }
 
-    // TODO: Keyword record
     std::string uncompressed_text = uncompress(record);
 
     if (format == PlainText) {

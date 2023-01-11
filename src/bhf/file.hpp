@@ -48,6 +48,9 @@ private:
         ContextContainer contexts;
     };
 
+    std::string BHF_FormatAsText(const std::string &text) const;
+    std::string BHF_FormatAsHTML(const std::string &text);
+
     std::string uncompress(const RecordHeader &record);
     void readString(std::string &str) noexcept;
     KeywordData readKeywords() noexcept;

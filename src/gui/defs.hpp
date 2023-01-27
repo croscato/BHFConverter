@@ -4,6 +4,7 @@
 #include <QDebug>
 
 #include <QtCore/QAbstractTableModel>
+#include <QtCore/QAbstractItemModel>
 #include <QtCore/QFile>
 #include <QtCore/QRegularExpression>
 #include <QtCore/QSortFilterProxyModel>
@@ -23,6 +24,7 @@
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QSpacerItem>
 #include <QtWidgets/QTableView>
+#include <QtWidgets/QTreeView>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QTextBrowser>
 #include <QtWidgets/QVBoxLayout>

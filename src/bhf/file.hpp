@@ -21,7 +21,7 @@ public:
     using ContextType = int;
     using ContextContainer = std::vector<ContextType>;
 
-    using IndexType = struct {ContextType context; std::string index; };
+    using IndexType = struct {std::string index; std::vector<ContextType> contexts; };
     using IndexContainer = std::vector<IndexType>;
 
     File() noexcept;

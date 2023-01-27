@@ -20,7 +20,7 @@ struct MainWindowData {
 
     QTabWidget *tab = nullptr;
     QTableView *tab_context = nullptr;
-    QTableView *tab_index = nullptr;
+    QTreeView *tab_index = nullptr;
     QLineEdit *edit_context = nullptr;
     QLineEdit *edit_index = nullptr;
     QTextBrowser *text = nullptr;
@@ -167,11 +167,12 @@ MainWindow::refreshBHFInformation() noexcept
         .arg(table.toHex(':'))
     );
 
-    d->model_context->update(d->help_file.context());
-    d->model_index->update(d->help_file.index());
+    d->model_context->update(&d->help_file.context());
+    d->model_index->update(&d->help_file.index());
 
     d->tab_context->resizeColumnsToContents();
-    d->tab_index->resizeColumnsToContents();
+    d->tab_index->resizeColumnToContents(0);
+    d->tab_index->resizeColumnToContents(1);
 }
 
 void
@@ -246,7 +247,7 @@ MainWindow::setupUI() noexcept
     d->tab->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
 
     d->tab_context = new QTableView;
-    d->tab_index = new QTableView;
+    d->tab_index = new QTreeView;
 
     connect(d->tab_context, &QTableView::activated, this, &MainWindow::activatedContext);
     connect(d->tab_index, &QTableView::activated, this, &MainWindow::activatedIndex);
@@ -264,7 +265,7 @@ MainWindow::setupUI() noexcept
     };
 
     connect(d->tab_context->horizontalHeader(), &QHeaderView::sortIndicatorChanged, sort_context);
-    connect(d->tab_index->horizontalHeader(), &QHeaderView::sortIndicatorChanged, sort_index);
+    connect(d->tab_index->header(), &QHeaderView::sortIndicatorChanged, sort_index);
 
     d->edit_context = new QLineEdit;
     d->edit_index = new QLineEdit;
@@ -312,7 +313,6 @@ MainWindow::setupUI() noexcept
     d->tab->addTab(widget_context, tr("&Context"));
 
     d->tab_context->verticalHeader()->setVisible(false);
-    d->tab_index->verticalHeader()->setVisible(false);
 
     d->text = new QTextBrowser;
     d->text->setFont(font_fixed);

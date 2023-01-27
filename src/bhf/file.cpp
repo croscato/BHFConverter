@@ -40,12 +40,11 @@ struct FileData {
     std::string last_error;
 };
 
-static std::string kHtmlSpace = "&nbsp;";
-static constexpr int kAsciiSpace = 0x20;
+static const std::string kHtmlSpace{"&nbsp;"};
+static constexpr int kAsciiSpace{0x20};
 
 static std::string BHF_CP437toUTF8(u8 character);
 static std::string BHF_HTMLEncoding(u8 character);
-static void BHF_InsertHtmlKeyword(std::string &text, std::string::size_type position, File::ContextType context);
 
 File::File() noexcept
     : d{std::make_unique<FileData>()}
@@ -267,30 +266,6 @@ struct NibbleStream {
     int length = 0;
     int index = 0;
 };
-
-void
-BHF_InsertHtmlKeyword(std::string &text, std::string::size_type position, File::ContextType context)
-{
-    auto size = kHtmlSpace.size();
-
-    if (text.size() > size) {
-        while (text.compare(position, size, kHtmlSpace) == 0) {
-            position += size;
-        }
-    }
-
-    text.insert(position, fmt::format("<a href=\"{}\">", context));
-
-    position = text.size();
-
-    if (position > size) {
-        while (text.compare(position - size, size, kHtmlSpace) == 0) {
-            position -= size;
-        }
-    }
-
-    text.insert(position, "</a>");
-}
 
 std::string
 File::uncompress(const RecordHeader &record)
@@ -526,6 +501,8 @@ File::parse() noexcept
 
     std::string previous_index;
 
+    std::unordered_map<std::string, IndexContainer::size_type> index_map;
+
     for (u16 i = 0; i < index_count; ++i) {
         u8 length = readType<u8>();
         u8 carry = static_cast<u8>(length >> 5u);
@@ -546,7 +523,15 @@ File::parse() noexcept
 
         File::ContextType context = readType<u16>();
 
-        d->index.push_back({context, chars});
+        auto index_iterator = index_map.find(chars);
+
+        if (index_iterator == index_map.end()) {
+            index_map[chars] = d->index.size();
+
+            d->index.push_back({chars, {context}});
+        } else {
+            d->index[index_iterator->second].contexts.push_back(context);
+        }
 
         previous_index = chars;
     }

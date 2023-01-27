@@ -7,7 +7,7 @@ namespace GUI {
 namespace Model {
 
 struct ContextData {
-    BHF::File::ContextContainer container;
+    const BHF::File::ContextContainer *container = nullptr;
 };
 
 Context::Context(QObject *parent) noexcept
@@ -37,7 +37,7 @@ Context::rowCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent);
 
-    return static_cast<int>(d->container.size());
+    return (d->container) ? static_cast<int>(d->container->size()) : 0;
 }
 
 int
@@ -51,6 +51,8 @@ Context::columnCount(const QModelIndex &parent) const
 QVariant
 Context::data(const QModelIndex &index, int role) const
 {
+    if (!d->container) return {};
+
     if (index.isValid()) {
         int row = index.row();
         int col = index.column();
@@ -60,7 +62,7 @@ Context::data(const QModelIndex &index, int role) const
                 if (col == 0) {
                     return row;
                 } else if (col == 1) {
-                    return QVariant::fromValue<BHF::File::ContextType>(d->container.at(static_cast<BHF::File::ContextContainer::size_type>(row)));
+                    return QVariant::fromValue<BHF::File::ContextType>(d->container->at(static_cast<BHF::File::ContextContainer::size_type>(row)));
                 }
             }
         }
@@ -69,7 +71,7 @@ Context::data(const QModelIndex &index, int role) const
     return {};
 }
 
-void Context::update(const BHF::File::ContextContainer &container) noexcept
+void Context::update(const BHF::File::ContextContainer *container) noexcept
 {
     beginResetModel();
     d->container = container;

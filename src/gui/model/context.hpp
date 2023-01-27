@@ -24,7 +24,7 @@ public:
     virtual int columnCount(const QModelIndex &parent) const override;
     virtual QVariant data(const QModelIndex &index, int role) const override;
 
-    void update(const BHF::File::ContextContainer &container) noexcept;
+    void update(const BHF::File::ContextContainer *container) noexcept;
 
 private:
     std::unique_ptr<ContextData> d;

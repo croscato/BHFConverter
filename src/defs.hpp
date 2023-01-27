@@ -14,6 +14,8 @@
 #include <string_view>
 #include <vector>
 #include <array>
+#include <unordered_map>
+#include <functional>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpadded"

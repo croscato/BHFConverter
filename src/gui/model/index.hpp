@@ -11,7 +11,7 @@ namespace Model {
 
 struct IndexData;
 
-class Index : public QAbstractTableModel
+class Index : public QAbstractItemModel
 {
     Q_OBJECT
 
@@ -19,12 +19,14 @@ public:
     explicit Index(QObject *parent = nullptr) noexcept;
     ~Index() noexcept;
 
+    QModelIndex index(int row, int column, const QModelIndex &parent) const;
+    QModelIndex parent(const QModelIndex &child) const;
     virtual QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
     virtual int rowCount(const QModelIndex &parent) const override;
     virtual int columnCount(const QModelIndex &parent) const override;
     virtual QVariant data(const QModelIndex &index, int role) const override;
 
-    void update(const BHF::File::IndexContainer &container) noexcept;
+    void update(const BHF::File::IndexContainer *container) noexcept;
 
 private:
     std::unique_ptr<IndexData> d;

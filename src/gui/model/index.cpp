@@ -61,20 +61,20 @@ Index::headerData(int section, Qt::Orientation orientation, int role) const
 int
 Index::rowCount(const QModelIndex &parent) const
 {
-    if (d->container) {
-        if (!parent.isValid()) {
-            return static_cast<int>(d->container->size());
-        } else if (parent.internalPointer() != nullptr) {
-            //auto row = static_cast<BHF::File::IndexContainer::size_type>(parent.row());
-            //return static_cast<int>(d->container->at(row).contexts.size());
+    //if (d->container) {
+    //    if (!parent.isValid()) {
+    //        return static_cast<int>(d->container->size());
+    //    } else if (parent.internalPointer() != nullptr) {
+    //        //auto row = static_cast<BHF::File::IndexContainer::size_type>(parent.row());
+    //        //return static_cast<int>(d->container->at(row).contexts.size());
 
-            BHF::File::IndexType *data = reinterpret_cast<BHF::File::IndexType *>(parent.internalPointer());
+    //        BHF::File::IndexType *data = reinterpret_cast<BHF::File::IndexType *>(parent.internalPointer());
 
-            return static_cast<int>(data->contexts.size());
-        }
-    }
+    //        return static_cast<int>(data->contexts.size());
+    //    }
+    //}
 
-    return 0;
+    return 10;
 }
 
 int
@@ -96,15 +96,16 @@ Index::data(const QModelIndex &index, int role) const
 
         switch (role) {
             case Qt::DisplayRole: {
-                BHF::File::IndexType data = d->container->at(static_cast<BHF::File::IndexContainer::size_type>(row));
+                    return QString("row: %1,col: %2").arg(row).arg(col);
+                //BHF::File::IndexType data = d->container->at(static_cast<BHF::File::IndexContainer::size_type>(row));
 
-                if (col == 0) {
-                    return QString::fromStdString(data.index);
-                } else if (col == 1) {
-                    return QVariant::fromValue<BHF::File::ContextType>(data.contexts.at(0));
-                }
+                //if (col == 0) {
+                //    return QString::fromStdString(data.index);
+                //} else if (col == 1) {
+                //    return QVariant::fromValue<BHF::File::ContextType>(data.contexts.at(0));
+                //}
 
-                return {};
+                //return {};
             }
         }
     }
